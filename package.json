@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:ux": "vite --mode ux",
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test tests/*.test.js"

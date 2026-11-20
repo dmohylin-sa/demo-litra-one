@@ -22,6 +22,7 @@ import MasterData from './pages/MasterData.jsx';
 import Integrations from './pages/Integrations.jsx';
 import Admin from './pages/Admin.jsx';
 import ProcessMap from './pages/ProcessMap.jsx';
+import ConceptsRoutes from './concepts/ConceptsRoutes.jsx';
 
 const { Header, Sider, Content } = Layout;
 
@@ -259,4 +260,14 @@ export function NoAccess() {
   return <Result status="403" title="Not available for this role" subTitle="Switch role in the header to open this module." />;
 }
 
-export default Shell;
+// UX exploration concepts (/concepts/*) render outside the prototype shell; every other path uses the shell.
+function Root() {
+  return (
+    <Routes>
+      <Route path="/concepts/*" element={<ConceptsRoutes prototypeLink />} />
+      <Route path="*" element={<Shell />} />
+    </Routes>
+  );
+}
+
+export default Root;

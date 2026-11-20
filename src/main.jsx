@@ -12,21 +12,36 @@ import './styles.css';
 import { StoreProvider } from './store/StoreProvider.jsx';
 import Shell from './App.jsx';
 import { DemoLoginGate } from './demo-login/DemoLoginGate';
+import { UX_EXPLORATION } from './concepts/mode.js';
+import ExplorationApp from './concepts/ExplorationApp.jsx';
 
 dayjs.locale('en-gb');
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <DemoLoginGate>
-      <ConfigProvider theme={antdTheme} locale={enGB}>
-        <AntdApp>
-          <StoreProvider>
-            <HashRouter>
-              <Shell />
-            </HashRouter>
-          </StoreProvider>
-        </AntdApp>
-      </ConfigProvider>
-    </DemoLoginGate>
-  </React.StrictMode>,
+// Original prototype: demo sign-in, persisted store, prototype shell (unchanged).
+const prototype = (
+  <DemoLoginGate>
+    <ConfigProvider theme={antdTheme} locale={enGB}>
+      <AntdApp>
+        <StoreProvider>
+          <HashRouter>
+            <Shell />
+          </HashRouter>
+        </StoreProvider>
+      </AntdApp>
+    </ConfigProvider>
+  </DemoLoginGate>
 );
+
+// UX exploration mode (ux-exploration branch): concept-only entry. It does not mount the demo
+// sign-in, the prototype store (no reads/writes of its localStorage state) or the prototype shell.
+const exploration = (
+  <ConfigProvider theme={antdTheme} locale={enGB}>
+    <AntdApp>
+      <HashRouter>
+        <ExplorationApp />
+      </HashRouter>
+    </AntdApp>
+  </ConfigProvider>
+);
+
+ReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode>{UX_EXPLORATION ? exploration : prototype}</React.StrictMode>);
