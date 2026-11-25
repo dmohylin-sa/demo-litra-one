@@ -1,0 +1,11 @@
+/* Product-level navigation shared by desktop workspaces (Session 1 of the demo journey alignment).
+   Workspace tabs (Planning: Order Intake | Planning Board): a tab row of their own under the product header, with an
+   underline on the active tab. The context controls of the active tab follow in the .cn-context row below. */
+.cn-ws-tabs { flex: none; display: flex; align-items: stretch; gap: 24px; height: 40px; padding: 0 16px; background: #fff; border-bottom: 1px solid #E6EAF2; }
+.cn-ws-tab { position: relative; display: inline-flex; align-items: center; font-size: 13.5px; font-weight: 600; color: #5B6478; white-space: nowrap; text-decoration: none; }
+.cn-ws-tab::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px 2px 0 0; background: transparent; }
+a.cn-ws-tab:hover { color: #1B2541; }
+a.cn-ws-tab:hover::after { background: #C9D3E6; }
+.cn-ws-tab.is-active { color: #1B2541; font-weight: 700; }
+.cn-ws-tab.is-active::after { background: #1F4FA8; }
+.cn-ws-tab:focus-visible { outline: 2px solid #1F4FA8; outline-offset: -2px; border-radius: 4px; }

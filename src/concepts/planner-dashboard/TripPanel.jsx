@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Button, Select, Tag, Input, Modal, Alert, Tooltip, Popover, Badge, Radio, Checkbox } from 'antd';
 import {
   SendOutlined, CheckCircleFilled, CloseCircleFilled, WarningFilled, ClockCircleOutlined, MobileOutlined,
-  CarOutlined, StopOutlined, UserOutlined, SwapOutlined, InfoCircleOutlined, SearchOutlined, FilterOutlined, EnvironmentOutlined,
+  CarOutlined, StopOutlined, UserOutlined, SwapOutlined, InfoCircleOutlined, SearchOutlined, FilterOutlined, EnvironmentOutlined, PlusOutlined, SaveOutlined,
 } from '@ant-design/icons';
 import { CompartmentBar } from '../../components/common.jsx';
 import { TRAILER_TYPES } from '../../data/masters.js';
@@ -198,23 +198,23 @@ function DriverPicker({ drivers, driverId, ix, onPick }) {
 
 // Colour carries meaning: red only for hard-rule conflicts, amber for warnings to accept,
 // neutral blue for normal next steps (no driver yet), green when every required check passes.
-export function readyMeta(r) {
+export function readyMeta(r, ready = 'Ready for dispatch') {
   if (r.state === 'none') return { head: 'No trip selected', tone: 'idle', Icon: CarOutlined };
   if (r.state === 'blocked') return { head: 'Blocking issues detected', tone: 'block', Icon: CloseCircleFilled };
   if (r.state === 'needs-driver') return { head: 'Planning incomplete', tone: 'todo', Icon: UserOutlined };
-  if (r.warnings.length) return { head: 'Ready for dispatch', tone: 'warn', Icon: WarningFilled };
-  return { head: 'Ready for dispatch', tone: 'ok', Icon: CheckCircleFilled };
+  if (r.warnings.length) return { head: ready, tone: 'warn', Icon: WarningFilled };
+  return { head: ready, tone: 'ok', Icon: CheckCircleFilled };
 }
 
 // Overall readiness only: a one-line summary and where to go next. The issues themselves are
 // listed in the planning feedback above the map ("View issues"), not repeated here.
-function Readiness({ r, onViewIssues, onChooseDriver }) {
-  const meta = readyMeta(r);
+function Readiness({ r, onViewIssues, onChooseDriver, act = ACTIONS.send }) {
+  const meta = readyMeta(r, act.ready);
   const summary = {
     none: '',
     blocked: r.primary ? `${r.primary.label}${r.blocks.length > 1 ? ` (+${r.blocks.length - 1} more)` : ''}` : '',
     'needs-driver': 'No driver assigned',
-    ready: r.warnings.length ? `${plural(r.warnings.length, 'warning')} to accept when sending` : 'All required checks passed',
+    ready: r.warnings.length ? `${plural(r.warnings.length, 'warning')} ${act.warnLabel}` : 'All required checks passed',
   }[r.state];
   const canView = onViewIssues && (r.blocks.length || r.warnings.length || r.state === 'blocked');
   return (
@@ -244,7 +244,17 @@ function Readiness({ r, onViewIssues, onChooseDriver }) {
 
 // ---------------------------------------------------------------- draft trip (review, assign, send)
 
-export function DraftPanel({ draft, error, errorOrderIds = [], fit, ix, onTruck, onTerminal, onDriver, onClear, onSend, focus, onFocusOrders, onFocusRoute, onViewIssues, actionSlot, header }) {
+// What the draft's primary action does. 'send': the original flow (a trip outside the proposed plan is sent to the
+// driver). 'add': a manual trip for the proposed plan (PB-05), added as accepted, dispatched from the board. 'adjust':
+// a proposed trip opened in the editor (PB-03); saving records the edit, no comment needed (accepting asks for it).
+const ACTIONS = {
+  send: { label: 'Review & send to driver', Icon: SendOutlined, ready: 'Ready for dispatch', title: 'Send trip to driver?', ok: 'Send to tablet', warnLabel: 'to accept when sending' },
+  add: { label: 'Add to plan', Icon: PlusOutlined, ready: 'Ready to add', title: 'Add this trip to the plan?', ok: 'Add as accepted', warnLabel: 'to accept when adding' },
+  adjust: { label: 'Save changes', Icon: SaveOutlined, ready: 'Ready to save', title: null, ok: null, warnLabel: 'to accept later' },
+};
+
+export function DraftPanel({ draft, error, errorOrderIds = [], fit, ix, onTruck, onTerminal, onDriver, onClear, onSend, focus, onFocusOrders, onFocusRoute, onViewIssues, actionSlot, header, action = 'send' }) {
+  const act = ACTIONS[action];
   const [comment, setComment] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pickTruck, setPickTruck] = useState(false);
@@ -288,8 +298,8 @@ export function DraftPanel({ draft, error, errorOrderIds = [], fit, ix, onTruck,
   const sendButton = ({ hint, enabled }) => {
     const btn = (
       <Tooltip title={enabled ? null : hint} placement="bottomRight">
-        <Button type="primary" size="small" className="cn-primary-action" icon={<SendOutlined />} disabled={!enabled} onClick={() => setConfirmOpen(true)}>
-          Review & send to driver
+        <Button type="primary" size="small" className="cn-primary-action" icon={<act.Icon />} disabled={!enabled} onClick={() => (action === 'adjust' ? onSend('') : setConfirmOpen(true))}>
+          {act.label}
         </Button>
       </Tooltip>
     );
@@ -304,7 +314,7 @@ export function DraftPanel({ draft, error, errorOrderIds = [], fit, ix, onTruck,
           {sendButton({ hint: error ? 'Products cannot be loaded at one terminal' : 'Select orders to build a trip' })}
         </div>
         <div className="cn-panel-body" ref={bodyRef}>
-          {error ? <Readiness r={r} onViewIssues={onViewIssues} /> : <div className="cn-empty-line">Select orders to start planning.</div>}
+          {error ? <Readiness r={r} onViewIssues={onViewIssues} act={act} /> : <div className="cn-empty-line">{action === 'adjust' ? 'The trip has no stops. Add an order, or cancel to keep the trip as it was.' : 'Select orders to start planning.'}</div>}
         </div>
       </div>
     );
@@ -331,9 +341,11 @@ export function DraftPanel({ draft, error, errorOrderIds = [], fit, ix, onTruck,
   const needComment = r.warnings.length > 0;
   const reasonOk = !needComment || comment.trim().length >= 3;
 
-  const meta = readyMeta(r);
+  const meta = readyMeta(r, act.ready);
+  // Saving an adjusted trip with a hard rule is allowed: the trip then shows under "Requires attention" and cannot be
+  // accepted until it is resolved (PB-04). Sending or adding a trip with a hard rule is not.
   const bar =
-    r.state === 'blocked'
+    r.state === 'blocked' && action !== 'adjust'
       ? { hint: `Not ready: ${r.primary.label.toLowerCase()}${r.blocks.length > 1 ? ` (+${r.blocks.length - 1} more)` : ''}` }
       : r.state === 'needs-driver'
         ? { hint: 'Not ready: no driver assigned' }
@@ -346,7 +358,7 @@ export function DraftPanel({ draft, error, errorOrderIds = [], fit, ix, onTruck,
         {header}
       </div>
       <div className="cn-panel-body" ref={bodyRef}>
-        <Readiness r={r} onViewIssues={onViewIssues} onChooseDriver={changeDriver} />
+        <Readiness r={r} onViewIssues={onViewIssues} onChooseDriver={changeDriver} act={act} />
 
         {/* Trip overview: secondary to readiness */}
         <section className="cn-rv-card cn-ov tnum" id="cn-sec-overview" aria-label="Trip overview">
@@ -387,7 +399,7 @@ export function DraftPanel({ draft, error, errorOrderIds = [], fit, ix, onTruck,
                     <Tag color="blue" style={{ marginLeft: 6, cursor: 'help' }}>Suggested</Tag>
                   </Tooltip>
                 ) : null}
-                {autoTruck ? <Note kind="A" refs="ranking">Concept ranking only (rules first, then approach distance). ML proposals with reasons (WBS:113-115) are not part of this concept.</Note> : null}
+                {autoTruck ? <Note kind="A" refs="ranking">Manual flow: concept ranking only (rules first, then approach distance). The proposed plan on the Planning Board is scripted for the demo; the decision engine (WBS:113-115) is not built.</Note> : null}
               </div>
               <div className="small muted">
                 {trailer.reg} · {TRAILER_TYPES[trailer.type]}
@@ -514,9 +526,9 @@ export function DraftPanel({ draft, error, errorOrderIds = [], fit, ix, onTruck,
 
       <Modal
         open={confirmOpen}
-        title="Send trip to driver?"
-        okText="Send to tablet"
-        okButtonProps={{ icon: <SendOutlined />, disabled: !reasonOk }}
+        title={act.title}
+        okText={act.ok}
+        okButtonProps={{ icon: <act.Icon />, disabled: !reasonOk }}
         onCancel={() => setConfirmOpen(false)}
         onOk={() => {
           setConfirmOpen(false);
@@ -558,14 +570,24 @@ export function DraftPanel({ draft, error, errorOrderIds = [], fit, ix, onTruck,
                 </>
               ) : null}
             </dl>
-            <Alert
-              style={{ marginTop: 12 }}
-              type="info"
-              showIcon
-              icon={<MobileOutlined />}
-              message="The trip appears on the driver's tablet. The driver confirms receipt."
-              description={<span className="small">The trip stays visible here as “Sent, not confirmed” until the driver confirms.</span>}
-            />
+            {action === 'add' ? (
+              <Alert
+                style={{ marginTop: 12 }}
+                type="info"
+                showIcon
+                message="The trip joins the plan as Accepted and is labelled Manual."
+                description={<span className="small">Dispatch it to the driver from the plan, like the other trips.</span>}
+              />
+            ) : (
+              <Alert
+                style={{ marginTop: 12 }}
+                type="info"
+                showIcon
+                icon={<MobileOutlined />}
+                message="The trip appears on the driver's tablet. The driver confirms receipt."
+                description={<span className="small">The trip stays visible here as “Sent, not confirmed” until the driver confirms.</span>}
+              />
+            )}
           </div>
         ) : null}
       </Modal>

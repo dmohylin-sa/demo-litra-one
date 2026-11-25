@@ -21,17 +21,21 @@ function Fit({ points }) {
 
 const icon = (cls, text = '') => L.divIcon({ className: 'cn-pin-wrap', html: `<div class="dt-pin ${cls}">${text}</div>`, iconSize: [0, 0] });
 
-export default function DriverMap({ trip, ix, state, selected, onSelect, labelOf }) {
+// The truck is at the stop of the current task (terminal, customer site); on the way back it is between the last
+// delivery and the depot; before departure it is at the depot. `ex`: model.js execState.
+const AT_STOP = ['load', 'manifest', 'deliver'];
+
+export default function DriverMap({ trip, ix, ex, selected, onSelect, labelOf }) {
   const legs = useMemo(() => tripLegs(trip, ix), [trip, ix]);
   const points = trip.stops.map((s) => [ix.loc(s.locId).lat, ix.loc(s.locId).lng]);
 
   let truck = null;
-  if (state.phase === 'active') {
-    const here = ix.loc(trip.stops[state.cursor].locId);
-    const prev = ix.loc(trip.stops[state.cursor - 1]?.locId || trip.stops[0].locId);
-    const p = state.stops[state.cursor] === 'enroute' ? lerp(prev, here, 0.5) : here;
+  if (AT_STOP.includes(ex.phase) || ex.phase === 'return') {
+    const here = ix.loc(trip.stops[ex.cursor].locId);
+    const prev = ix.loc(trip.stops[ex.cursor - 1]?.locId || trip.stops[0].locId);
+    const p = ex.phase === 'return' ? lerp(prev, here, 0.5) : here;
     truck = [p.lat, p.lng];
-  } else if (state.phase !== 'completed') {
+  } else if (ex.phase !== 'completed') {
     const d = ix.loc(trip.stops[0].locId);
     truck = [d.lat, d.lng];
   }
@@ -42,12 +46,12 @@ export default function DriverMap({ trip, ix, state, selected, onSelect, labelOf
         <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <Fit points={points} />
         {legs.map((l) => {
-          const done = stopStatus(state, l.i) === 'done' || (state.phase === 'active' && l.i === state.cursor && state.stops[l.i] === 'arrived');
+          const done = stopStatus(ex, l.i) === 'done' || (AT_STOP.includes(ex.phase) && l.i === ex.cursor);
           return <Polyline key={l.i} positions={l.points} pathOptions={{ color: done ? '#2E7D32' : '#1F4FA8', weight: done ? 6 : 5, opacity: done ? 0.85 : 0.75, dashArray: done ? null : '10 8' }} />;
         })}
         {trip.stops.slice(0, -1).map((s, i) => {
           const loc = ix.loc(s.locId);
-          const st = stopStatus(state, i);
+          const st = stopStatus(ex, i);
           const cls = `${s.kind === 'deliver' ? 'is-deliver' : `is-${s.kind}`} is-${st}${selected === i ? ' is-selected' : ''}`;
           const text = st === 'done' && s.kind === 'deliver' ? '✓' : labelOf(i);
           return (

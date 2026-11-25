@@ -50,7 +50,7 @@ function Leg({ stop }) {
 }
 
 export default function StopSequence({
-  trip, ix, orderById, date, startManual, onStart, onAutoStart, onMove, onReorder, onRemoveSite, hoverSite, onHover, readOnly, change, now, onUndo, onDismissChange, flashKey,
+  trip, ix, orderById, date, startManual, onStart, onAutoStart, onMove, onReorder, onRemoveSite, hoverSite, onHover, readOnly, readOnlyLabel, change, now, onUndo, onDismissChange, flashKey,
 }) {
   // Drag state: index being dragged, row it is over and whether the drop goes after that row.
   const [drag, setDrag] = useState(null);
@@ -88,7 +88,7 @@ export default function StopSequence({
           <Note refs="WBS:113, 117">Stop sequence is part of the trip; the planner can change stops and the system re-checks rules after every change.</Note>
         </div>
         {readOnly ? (
-          <span className="small muted" style={{ marginLeft: 'auto' }}>Sent trip · read only · shift starts {hhmm(trip.plan.start)}</span>
+          <span className="small muted" style={{ marginLeft: 'auto' }}>{readOnlyLabel || 'Sent trip · read only'} · shift starts {hhmm(trip.plan.start)}</span>
         ) : (
         <div className="cn-row" style={{ gap: 8, marginLeft: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Tooltip title="Driver starts at the depot with the 15 min pre-trip check, then departs"><span className="small muted">Shift start</span></Tooltip>

@@ -6,8 +6,9 @@ import { ixOf } from '../domain/ix.js';
 const KEY = 'litra-one-demo-state';
 const Ctx = createContext(null);
 
-function load() {
+function load(persist) {
   const fresh = createSeed();
+  if (!persist) return fresh;
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
@@ -20,10 +21,17 @@ function load() {
   return fresh;
 }
 
-export function StoreProvider({ children }) {
-  const [state, dispatch] = useReducer(reducer, undefined, load);
+// persist (default true): the prototype's behaviour - state saved in localStorage, test hook on window.
+// persist={false}: a fresh, in-memory store (used by UX concepts that embed a prototype screen, so they never read or
+// write the prototype's saved state). role: optional starting role for such an embedded store.
+export function StoreProvider({ children, persist = true, role }) {
+  const [state, dispatch] = useReducer(reducer, undefined, () => {
+    const s = load(persist);
+    return role ? { ...s, ui: { ...s.ui, role } } : s;
+  });
 
   useEffect(() => {
+    if (!persist) return undefined;
     const h = setTimeout(() => {
       try {
         localStorage.setItem(KEY, JSON.stringify(state));
@@ -32,7 +40,7 @@ export function StoreProvider({ children }) {
       }
     }, 500);
     return () => clearTimeout(h);
-  }, [state]);
+  }, [state, persist]);
 
   // Demo clock: N simulated minutes per real second.
   useEffect(() => {
@@ -59,8 +67,8 @@ export function StoreProvider({ children }) {
   const stateRef = useRef(state);
   stateRef.current = state;
   useEffect(() => {
-    window.__litra = { dispatch, getState: () => stateRef.current };
-  }, []);
+    if (persist) window.__litra = { dispatch, getState: () => stateRef.current };
+  }, [persist]);
 
   const ix = ixOf(state.masters);
   const value = useMemo(() => ({ state, dispatch, ix }), [state, ix]);
