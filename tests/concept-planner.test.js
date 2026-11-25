@@ -9,6 +9,7 @@ import {
   EMPTY_FILTERS, matchesFilters, activeFilterCount, selectionFeedback, routeSuggestion, routeMetrics, tripForSequence, isRouteIssue, suggestDriver,
 } from '../src/concepts/planner-dashboard/model.js';
 import { createConceptSeed } from '../src/concepts/planner-dashboard/mockData.js';
+import { pinDemoIds, DEMO_TRIP } from '../src/concepts/demo.js';
 import { planningFeedback } from '../src/concepts/planner-dashboard/feedback.js';
 import { tripReadiness, describeIssue } from '../src/concepts/planner-dashboard/readiness.js';
 
@@ -120,7 +121,8 @@ test('selection feedback reads the rule engine, never claims "compatible"', () =
 });
 
 test('expanded concept data: about 24 MTN orders per planning day, original seed untouched', () => {
-  const base = createSeed();
+  // Baseline: the seed with the demo order's ID pinned (the only change the concept seed makes to seed orders).
+  const base = pinDemoIds(createSeed());
   const cs = createConceptSeed();
   const cix = ixOf(cs.masters);
   assert.equal(base.orders.length, s.orders.length, 'createSeed() itself is unchanged');
@@ -142,9 +144,9 @@ test('expanded concept data: about 24 MTN orders per planning day, original seed
 });
 
 test('expanded concept data keeps the presenter scenarios selecting the same orders', () => {
-  const base = createSeed();
+  const base = pinDemoIds(createSeed());
   const cs = createConceptSeed();
-  const scenarios = [[NEXT_DAY, ['S-NOR-GJO']], [NEXT_DAY, ['S-NOR-ELV', 'S-NOR-KON']], [NEXT_DAY, ['S-NOR-GJO', 'S-NOR-LIL']], [NEXT_DAY, ['S-AER-HAM', 'S-NOR-ELV']], [DEMO_DAY, ['S-NOR-HAM']]];
+  const scenarios = [[NEXT_DAY, DEMO_TRIP.sites],[NEXT_DAY, ['S-NOR-ELV', 'S-NOR-KON']], [NEXT_DAY, ['S-NOR-GJO', 'S-NOR-LIL']], [NEXT_DAY, ['S-AER-HAM', 'S-NOR-ELV']], [DEMO_DAY, ['S-NOR-HAM']]];
   scenarios.forEach(([date, sites]) => {
     const pick = (seed) => splitOrders(seed.orders, { date, companyId: 'MTN' }).ready.filter((o) => sites.includes(o.siteId)).map((o) => o.id);
     assert.deepEqual(pick(cs), pick(base), sites.join('+'));
@@ -281,4 +283,258 @@ test('driver suggestion: eligible only, same base as the truck first, explainabl
   assert.ok(sOsl.opt.eligible);
   assert.equal(suggestDriver(driverOptions(osl.trip, ctx).map((d) => ({ ...d, eligible: false }))), null);
   assert.ok(sel.length === 1);
+});
+
+// ---------------------------------------------------------------- Planning Board: proposed plan (S3, PB-01 / PB-02)
+// Plan: 04-design-workspace/02-analysis/demo-journey-alignment-plan.md §3.4, §8 PB-01, PB-02.
+
+const pb = await import('../src/concepts/planner-dashboard/proposals.js');
+const jr = await import('../src/concepts/journey/index.js');
+const { readFileSync } = await import('node:fs');
+const { DEMO_ORDER } = await import('../src/concepts/demo.js');
+const sc = jr.scenarioContext();
+const boardFor = (log, step = '03') => {
+  const view = jr.journeyView(log, step, sc);
+  return { view, ...pb.buildBoard(sc, view) };
+};
+const recLive = (log, type, at, entities, payload = {}) => jr.appendEvent(log, { type, at, entities, payload }).log;
+const FLAGGED = sc.orders.find((o) => o.siteRef === jr.FLAGGED_ORDER_FIX.siteRef);
+
+test('PB-01: step 03 opens on every proposal with the five states told apart, attention first', () => {
+  const b = boardFor(jr.emptyLog());
+  assert.deepEqual(b.groups.map((g) => g.key), ['attention', 'proposed', 'accepted', 'dispatched', 'unassigned']);
+  assert.deepEqual(b.groups.map((g) => g.label), ['Requires attention', 'Proposed', 'Accepted', 'Dispatched', 'Unassigned orders']);
+  assert.equal(b.trips.length, sc.plan.proposals.length, 'all proposals available, no planner action');
+  // 3 scripted unassigned orders + the NOR-0457 order fixed in step 02 (snapshot), new since the plan (OI-03).
+  assert.deepEqual(b.counts, { attention: 1, proposed: 9, accepted: 0, dispatched: 0, unassigned: 4 });
+  assert.deepEqual(b.groups[0].items.map((t) => t.id), ['TRP-26-04834']);
+  assert.ok(b.groups[1].items.some((t) => t.id === DEMO_TRIP.id), 'the demo trip is a clean proposal');
+  const starts = b.groups[1].items.map((t) => t.trip.plan.start);
+  assert.deepEqual(starts, [...starts].sort(), 'trips listed by shift start');
+  b.unassigned.forEach((u) => assert.ok(u.reason && u.action && u.order, `${u.id} has an explanation`));
+  sc.plan.unassigned.forEach((u) => assert.equal(b.unassigned.find((x) => x.id === u.orderId).reason, u.reason, 'scripted explanation kept'));
+  assert.ok(b.trips.every((t) => !t.edited && !t.manual));
+});
+
+test('PB-01: plan summary and KPIs; flagged orders fixed in Order Intake leave "needs fixing"', () => {
+  const fresh = boardFor(jr.emptyLog(), '01').summary; // step 01: nothing fixed yet
+  assert.equal(fresh.trips, 10);
+  assert.equal(fresh.ordersPlanned, sc.plan.summary.ordersPlanned);
+  assert.equal(fresh.ordersUnassigned, sc.plan.summary.ordersUnassigned);
+  assert.equal(fresh.km, sc.plan.summary.km);
+  assert.equal(fresh.savedKm, sc.plan.summary.savedKm, 'with no live action the board is the scripted plan');
+  assert.ok(fresh.savedKm > 0 && fresh.fill > 0 && fresh.emptyKm < fresh.km);
+  assert.equal(fresh.needsFixing, sc.plan.needsFixing.length);
+  const at03 = boardFor(jr.emptyLog()).summary; // step 02 snapshot: NOR-0457 mapped
+  assert.equal(at03.needsFixing, sc.plan.needsFixing.length - 1);
+  assert.ok(!at03.needsFixingIds.includes(FLAGGED.id));
+  assert.equal(at03.newOrders, 1);
+});
+
+test('PB-01: accepted and dispatched come from the journey; going back after a later step shows them done', () => {
+  let log = jr.emptyLog();
+  log = recLive(log, 'trip.accepted', '2026-12-01T07:40', { tripId: 'TRP-26-04825' });
+  log = recLive(log, 'trip.accepted', '2026-12-01T07:44', { tripId: DEMO_TRIP.id });
+  log = recLive(log, 'trip.dispatched', '2026-12-01T07:45', { tripId: DEMO_TRIP.id });
+  const b = boardFor(log);
+  assert.equal(b.counts.accepted, 1);
+  assert.equal(b.counts.dispatched, 1);
+  const demo = b.trips.find((t) => t.id === DEMO_TRIP.id);
+  assert.equal(demo.state, 'dispatched');
+  assert.equal(demo.dispatched.at, '2026-12-01T07:45');
+  assert.equal(b.view.clock, '2026-12-01T07:45', 'clock follows the last live planning action');
+  // A live step 05 action: the story has reached 05, so step 03 shows the scripted dispatch of every trip.
+  const later = recLive(jr.emptyLog(), 'customer.notified', '2026-12-02T07:10', { tripId: DEMO_TRIP.id, orderId: DEMO_ORDER.id }, { event: 'DELAY', channel: 'SMS' });
+  const back = boardFor(later);
+  assert.equal(back.counts.dispatched, 10);
+  assert.ok(back.trips.every((t) => t.dispatched && t.state === 'dispatched'));
+  assert.ok(back.trips.every((t) => !pb.canAccept(t) && !pb.canAdjust(t) && !pb.canDispatch(t)), 'dispatched trips are read only');
+});
+
+test('PB-02: proposal review data: reasons, ✓/⚠ rule checks, compartments, "not chosen", km vs separate trips', () => {
+  const { trips } = boardFor(jr.emptyLog());
+  for (const t of trips) {
+    assert.ok(t.proposal.reasons.length >= 3, `${t.id}: "Why this plan" has reasons`);
+    assert.ok(t.proposal.notChosen.length >= 1, `${t.id}: at least one alternative not chosen`);
+    const checks = pb.ruleChecks(t.issues);
+    assert.deepEqual(checks.map((c) => c.key), pb.RULE_GROUPS.map((g) => g.key), 'every rule group shown, nothing unknown');
+    assert.ok(!checks.some((c) => c.status === 'block'), `${t.id}: no hard rule`);
+    const f = pb.tripFacts(t.trip, sc.ix);
+    assert.equal(f.savedKm, f.separateKm - f.km);
+    assert.ok(f.compsUsed >= 1 && f.compsUsed <= f.comps);
+  }
+  const demo = trips.find((t) => t.id === DEMO_TRIP.id);
+  assert.ok(pb.ruleChecks(demo.issues).every((c) => c.status === 'ok'), 'demo trip: all ✓');
+  assert.ok(pb.tripFacts(demo.trip, sc.ix).savedKm > 0, 'demo trip: shorter than separate trips');
+  const att = trips.find((t) => t.state === 'attention');
+  assert.equal(pb.ruleChecks(att.issues).find((c) => c.key === 'driving').status, 'warn');
+  assert.equal(att.warnings[0].label, 'Needs an extended driving day');
+  // The board's states agree with the scripted plan's own rule results.
+  trips.forEach((t) => assert.equal(t.state, sc.plan.proposals.find((p) => p.id === t.id).state));
+});
+
+// ---------------------------------------------------------------- Planning Board: interactions (S4, PB-03…PB-05, OI-03)
+
+test('PB-03: an edit is re-checked live, shows "Edited" and can be reverted', () => {
+  const base = pb.scriptedSpec(DEMO_TRIP.id);
+  const swapped = { ...base, sites: [...base.sites].reverse() };
+  let log = recLive(jr.emptyLog(), 'trip.edited', '2026-12-01T07:31', { tripId: DEMO_TRIP.id }, { changes: pb.specChanges(base, swapped) });
+  let b = boardFor(log);
+  let demo = b.trips.find((t) => t.id === DEMO_TRIP.id);
+  assert.equal(demo.edited, true);
+  assert.deepEqual(demo.trip.stops.filter((s) => s.kind === 'deliver').map((s) => s.locId), swapped.sites, 'rebuilt from the edited spec');
+  assert.ok(demo.trip.plan.km !== sc.plan.proposals.find((p) => p.id === DEMO_TRIP.id).trip.plan.km, 'figures follow the edit');
+  assert.ok(pb.canAdjust(demo) && pb.canAccept(demo));
+  // An edit that breaks a hard rule: a fuel truck for the Jet A-1 trip, already used by another trip.
+  log = recLive(log, 'trip.edited', '2026-12-01T07:32', { tripId: 'TRP-26-04829' }, { changes: { truckId: 'TK-02' } });
+  b = boardFor(log);
+  const jet = b.trips.find((t) => t.id === 'TRP-26-04829');
+  assert.equal(jet.state, 'attention');
+  assert.ok(jet.blocks.some((i) => i.code === 'ADR_PRODUCT_TANK'), 'ADR tank rule re-checked');
+  assert.ok(jet.blocks.some((i) => i.code === 'DOUBLE_BOOKED'), 're-checked against the other trips');
+  assert.ok(!pb.canAccept(jet), 'a hard rule prevents accept (PB-04)');
+  assert.equal(b.trips.find((t) => t.id === 'TRP-26-04825').state, 'attention', 'the other trip sees the double booking too');
+  // Revert: an edit back to the proposal; the trip is no longer edited and clean again.
+  log = recLive(log, 'trip.edited', '2026-12-01T07:33', { tripId: 'TRP-26-04829' }, { changes: pb.specChanges(jet.spec, pb.scriptedSpec('TRP-26-04829')), comment: 'Reverted to the proposal' });
+  log = recLive(log, 'trip.edited', '2026-12-01T07:34', { tripId: DEMO_TRIP.id }, { changes: pb.specChanges(swapped, base) });
+  b = boardFor(log);
+  assert.ok(b.trips.every((t) => !t.edited));
+  assert.deepEqual(b.counts, boardFor(jr.emptyLog()).counts, 'reverted plan = proposed plan');
+});
+
+test('PB-03: a removed stop goes to Unassigned; the editor preset reproduces the trip', () => {
+  const base = pb.scriptedSpec('TRP-26-04825');
+  const log = recLive(jr.emptyLog(), 'trip.edited', '2026-12-01T07:31', { tripId: base.id }, { changes: { sites: [base.sites[0]] } });
+  const b = boardFor(log);
+  const removed = b.unassigned.find((u) => u.code === 'REMOVED');
+  assert.equal(removed.siteId, base.sites[1]);
+  assert.match(removed.reason, /TRP-26-04825/);
+  assert.equal(b.summary.ordersPlanned + b.summary.ordersUnassigned, b.summary.ordersValid);
+  const demo = boardFor(jr.emptyLog()).trips.find((t) => t.id === DEMO_TRIP.id);
+  const preset = pb.editorPreset(demo, NEXT_DAY);
+  assert.deepEqual(preset.orderIds, demo.trip.orderIds);
+  assert.deepEqual([preset.plan.truckId, preset.plan.driverId, preset.plan.terminalId, preset.plan.sequence], [DEMO_TRIP.truckId, DEMO_TRIP.driverId, DEMO_TRIP.terminalId, DEMO_TRIP.sites]);
+  assert.equal(preset.plan.start.slice(11), DEMO_TRIP.start);
+});
+
+test('PB-04: accept and dispatch are separate; warnings need a comment; the demo trip reaches the later steps', () => {
+  let b = boardFor(jr.emptyLog());
+  const att = b.trips.find((t) => t.state === 'attention');
+  assert.ok(pb.canAccept(att) && att.warnings.length, 'a warning does not block accept; the UI asks for the reason');
+  const demo = b.trips.find((t) => t.id === DEMO_TRIP.id);
+  assert.ok(!pb.canDispatch(demo), 'dispatch needs accept first');
+  let log = recLive(jr.emptyLog(), 'trip.accepted', '2026-12-01T07:31', { tripId: att.id }, { comment: 'Extended day agreed with the driver' });
+  log = recLive(log, 'trip.accepted', '2026-12-01T07:32', { tripId: DEMO_TRIP.id });
+  b = boardFor(log);
+  assert.equal(b.trips.find((t) => t.id === att.id).state, 'accepted', 'an accepted warning trip leaves "Requires attention"');
+  assert.ok(pb.canDispatch(b.trips.find((t) => t.id === DEMO_TRIP.id)));
+  log = recLive(log, 'trip.dispatched', '2026-12-01T07:33', { tripId: DEMO_TRIP.id });
+  b = boardFor(log);
+  assert.equal(b.trips.find((t) => t.id === DEMO_TRIP.id).state, 'dispatched');
+  // Later steps read the live dispatch: step 05 shows the demo trip dispatched at the live time, other trips scripted.
+  const ops = jr.journeyView(log, '05', sc);
+  assert.equal(ops.trips[DEMO_TRIP.id].dispatched.source, 'live');
+  assert.equal(ops.trips[DEMO_TRIP.id].dispatched.at, '2026-12-01T07:33');
+  assert.equal(ops.trips['TRP-26-04824'].dispatched.source, 'snapshot');
+});
+
+test('PB-05 + OI-03: fixed and created intake orders appear under Unassigned; a manual trip joins the plan as accepted', () => {
+  // Fixed live (instead of the step 02 snapshot): ORD-118539 becomes plannable at the mapped site.
+  let log = recLive(jr.emptyLog(), 'order.fixed', '2026-12-01T07:24', { orderId: FLAGGED.id }, { siteId: jr.FLAGGED_ORDER_FIX.siteId, siteRef: jr.FLAGGED_ORDER_FIX.siteRef, note: 'Mapped EDI site code NOR-0457 to Nordlys Kløfta' });
+  // Created in Order Intake (S5 records this), validated by the same validateOrder().
+  log = recLive(log, 'order.created', '2026-12-01T07:26', { orderId: 'ORD-118600' }, { order: { customerId: 'C-NOR', siteId: 'S-NOR-ELV', lines: [{ productId: 'DIESEL', qty: 6000 }], windowFrom: '2026-12-02T12:00', windowTo: '2026-12-02T16:00', channel: 'Phone' } });
+  let b = boardFor(log);
+  const fixed = b.unassigned.find((u) => u.id === FLAGGED.id);
+  const created = b.unassigned.find((u) => u.id === 'ORD-118600');
+  assert.ok(fixed?.isNew && created?.isNew, 'both marked new since the plan was proposed');
+  assert.equal(fixed.siteId, jr.FLAGGED_ORDER_FIX.siteId);
+  assert.deepEqual(created.order.errors, []);
+  assert.equal(b.unassigned[0].isNew, true, 'new orders listed first');
+  // PB-05: a manual trip for both, created and accepted in one action; labelled Manual; orders leave Unassigned.
+  const spec = { truckId: 'TK-07', driverId: 'DR-07', terminalId: 'T-SJU', start: '06:00', deliveries: [{ siteId: 'S-NOR-KLO', orderIds: [FLAGGED.id] }] };
+  const ent = { tripId: 'TRP-26-04836', truckId: spec.truckId, driverId: spec.driverId, orderIds: [FLAGGED.id] };
+  log = recLive(log, 'trip.created', '2026-12-01T07:30', ent, { spec });
+  log = recLive(log, 'trip.accepted', '2026-12-01T07:30', ent);
+  b = boardFor(log);
+  const manual = b.trips.find((t) => t.id === 'TRP-26-04836');
+  assert.equal(manual.manual, true);
+  assert.equal(manual.state, 'accepted');
+  assert.ok(!pb.canAdjust(manual));
+  assert.ok(!b.unassigned.some((u) => u.id === FLAGGED.id));
+  assert.ok(b.unassigned.some((u) => u.id === 'ORD-118600'));
+  assert.equal(b.summary.manual, 1);
+  assert.equal(b.summary.trips, 11);
+});
+
+test('PB-03…PB-05: the board records only journey milestones of step 03 (contract of Session 2)', () => {
+  const code = readFileSync(new URL('../src/concepts/planner-dashboard/PlannerDashboard.jsx', import.meta.url), 'utf8');
+  const types = [...code.matchAll(/record\('([a-z.]+)'/g)].map((m) => m[1]);
+  assert.ok(types.length >= 4);
+  types.forEach((t) => assert.equal(jr.ownerStep(t), '03', `${t} is a step 03 milestone`));
+  assert.match(code, /journey\.updateTrip\(/, 'edits and reverts are trip.edited');
+});
+
+test('PB-02: rule groups cover every rule code; double booking is split into vehicle and driver', () => {
+  const codes = [...readFileSync(new URL('../src/domain/rules.js', import.meta.url), 'utf8').matchAll(/add\('(?:block|warn|info)', '([A-Z_0-9]+)'/g)].map((m) => m[1]);
+  const grouped = new Set(pb.RULE_GROUPS.flatMap((g) => g.codes).map((c) => c.split(':')[0]));
+  [...new Set(codes)].forEach((c) => assert.ok(grouped.has(c), `${c} is in a rule group`));
+  const rows = pb.ruleChecks([
+    { severity: 'block', code: 'DOUBLE_BOOKED', title: 'Truck EB 1 is already on T' },
+    { severity: 'block', code: 'DOUBLE_BOOKED', title: 'Kari Haugen is already on T' },
+    { severity: 'info', code: 'TUNNEL', title: 'Tunnel code (D/E)' },
+    { severity: 'warn', code: 'NEW_RULE', title: 'Something new' },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'vehicle').status, 'block');
+  assert.equal(rows.find((r) => r.key === 'driver').status, 'block');
+  assert.equal(rows.find((r) => r.key === 'route').status, 'ok', 'an information notice keeps the check passed');
+  assert.equal(rows.find((r) => r.key === 'other').status, 'warn', 'an unknown code is never hidden');
+});
+
+test('PB-01/PB-02: the board never presents the scripted plan as optimizer output (no confidence, no runtime)', () => {
+  const code = (f) => readFileSync(new URL(`../src/concepts/planner-dashboard/${f}`, import.meta.url), 'utf8').split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  for (const f of ['proposals.js', 'PlanPanel.jsx', 'ProposalReview.jsx', 'PlannerDashboard.jsx']) {
+    // Product code and copy only: research notes (<Note>) may name the optimizer to say the plan is NOT its output.
+    const copy = code(f).replace(/<Note[\s\S]*?<\/Note>/g, '');
+    assert.doesNotMatch(copy, /optimizer|proposePlan/, `${f} does not use the optimizer`);
+    assert.doesNotMatch(copy, /confidence|generated|optimi[sz]ed plan|\bin \d+ ?ms\b|\bML\b/i, `${f}: no confidence figure, runtime or "generated" claim`);
+  }
+  assert.match(code('PlanPanel.jsx'), /plan\.label/, 'the product copy uses the plan label ("Proposed plan")');
+});
+
+// ---------------------------------------------------------------- trip timeline (proposal review)
+
+test('trip timeline: activities tile the schedule exactly; breaks, windows, waiting and warnings come from the trip', async () => {
+  const { tripTimeline } = await import('../src/concepts/planner-dashboard/trip-timeline.js');
+  const { diffMin: dm } = await import('../src/domain/util.js');
+  const b = boardFor(jr.emptyLog());
+  for (const t of b.trips) {
+    const tl = tripTimeline(t.trip, { orderById: b.orderById, issues: t.issues, ix: sc.ix });
+    // Contiguous from shift start to end, no gap and no overlap: positions and durations are the schedule's.
+    tl.segments.forEach((s, i) => i && assert.equal(s.from, tl.segments[i - 1].to, `${t.id}: segment ${i} follows the previous one`));
+    assert.equal(tl.segments[0].from, t.trip.plan.start);
+    assert.equal(tl.segments.at(-1).to, t.trip.plan.end);
+    const drive = tl.segments.filter((s) => s.type === 'drive').reduce((m, s) => m + dm(s.to, s.from), 0);
+    assert.equal(drive, t.trip.plan.driveMin, `${t.id}: driving time as scheduled`);
+    assert.equal(tl.breaks, t.trip.stops.filter((s) => s.breakMin).length);
+    assert.equal(tl.deliveries.length, t.trip.stops.filter((s) => s.kind === 'deliver').length);
+    assert.ok(tl.axisFrom <= t.trip.plan.start && tl.axisTo >= t.trip.plan.end);
+    tl.windows.forEach((w) => assert.ok(tl.axisFrom <= w.from && tl.axisTo >= w.to, 'windows inside the axis'));
+  }
+  // Long trip: two breaks; the driving-time warning is trip-wide.
+  const long = b.trips.find((t) => t.id === 'TRP-26-04834');
+  const tlLong = tripTimeline(long.trip, { orderById: b.orderById, issues: long.issues, ix: sc.ix });
+  assert.equal(tlLong.breaks, 2);
+  assert.deepEqual(tlLong.tripWarnings.map((w) => w.code), ['DRIVING_TIME']);
+  // Early arrival: Rena waits for its window; the block stays where the schedule puts it.
+  const ren = b.trips.find((t) => t.id === 'TRP-26-04825');
+  const rena = tripTimeline(ren.trip, { orderById: b.orderById, issues: ren.issues, ix: sc.ix }).deliveries.find((d) => d.siteId === 'S-NOR-REN');
+  assert.equal(rena.status, 'early');
+  assert.equal(rena.wait.from, rena.from);
+  // A late stop carries its own rule warning.
+  const late = recLive(jr.emptyLog(), 'trip.edited', '2026-12-01T07:31', { tripId: long.id }, { changes: { sites: ['S-NOR-OTT', 'S-NOR-BRU'] } });
+  const lb = boardFor(late);
+  const lt = lb.trips.find((t) => t.id === long.id);
+  const bru = tripTimeline(lt.trip, { orderById: lb.orderById, issues: lt.issues, ix: sc.ix }).deliveries.find((d) => d.siteId === 'S-NOR-BRU');
+  assert.equal(bru.status, 'late');
+  assert.ok(bru.warnings.some((w) => w.code === 'TIME_WINDOW'));
 });

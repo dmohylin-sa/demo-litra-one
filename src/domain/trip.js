@@ -3,13 +3,17 @@ import { buildSchedule } from './schedule.js';
 
 // Builds a trip (proposal, manual trip or seed) from resources + ordered deliveries.
 // deliveries: [{ siteId, orderIds: [] }]
-export function makeTrip({ companyId, date, truckId, trailerId, driverId, terminalId, deliveries, start, orders, ix, extra = {} }) {
+// loadOrder (optional): site IDs in the order the compartments were allocated (filled). A trip re-planned after it
+// was loaded keeps its compartments; only the stop order changes. Default: the delivery order.
+export function makeTrip({ companyId, date, truckId, trailerId, driverId, terminalId, deliveries, start, orders, ix, extra = {}, loadOrder = null }) {
   const truck = ix.truck(truckId);
   const trailer = ix.trailer(trailerId || truck?.defaultTrailerId);
   const orderById = new Map(orders.map((o) => [o.id, o]));
   let rows = [];
   const unallocated = [];
-  deliveries.forEach((d) =>
+  const rank = (d) => (loadOrder && loadOrder.includes(d.siteId) ? loadOrder.indexOf(d.siteId) : loadOrder ? loadOrder.length : 0);
+  const fillOrder = loadOrder ? [...deliveries].sort((a, b) => rank(a) - rank(b)) : deliveries;
+  fillOrder.forEach((d) =>
     d.orderIds.forEach((oid) => {
       const o = orderById.get(oid);
       if (!o) return;

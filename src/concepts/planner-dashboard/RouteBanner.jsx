@@ -109,7 +109,7 @@ function IssueRows({ items, orderById, ix, onHover, showOrders = true }) {
 }
 
 export default function RouteBanner({
-  draft, fit, suggestion, selectedOrders, orderById, focusTrip, previewing, onPreview, onCancel, onApply, onReview, ix, onHover, resetKey, openKey,
+  draft, fit, suggestion, selectedOrders, orderById, focusTrip, proposal, previewing, onPreview, onCancel, onApply, onReview, ix, onHover, resetKey, openKey,
 }) {
   const [open, setOpen] = useState(false);
   const [flash, setFlash] = useState(false);
@@ -129,6 +129,22 @@ export default function RouteBanner({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [previewing, onCancel]);
+
+  // Proposal view (PB-01): what the map shows. proposal: { tone, head, sub }.
+  if (proposal) {
+    const pIcon = { warning: <WarningFilled />, ok: <CheckCircleFilled />, idle: <AimOutlined />, done: <SendOutlined /> }[proposal.tone] || <AimOutlined />;
+    return (
+      <div className={`cn-route-banner tone-${proposal.tone === 'done' ? 'ok' : proposal.tone}`} role="status">
+        <div className="cn-rb-row">
+          <span className="cn-rb-icon">{pIcon}</span>
+          <div className="cn-rb-text" title={[proposal.head, proposal.sub].filter(Boolean).join(': ')}>
+            <b>{proposal.head}</b>
+            <span className="cn-rb-sub">{proposal.sub}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (focusTrip) {
     return (

@@ -233,7 +233,7 @@ export default function OrdersTray({
                 <WarningFilled /> Needs fixing first · {view.flagged.length}
               </button>
               <Note kind="G" refs="UX-Q03, E1">
-                Flagged orders cannot be planned. Who fixes them (planner or customer service) is open; the fix flow is not part of this concept.
+                Flagged orders cannot be planned until they are fixed in Planning › Order Intake. Who fixes them (planner or customer service) is open.
               </Note>
             </div>
             <div id="cn-flagged-list" className={`cn-collapse${showFlagged ? ' is-open' : ''}`} aria-hidden={!showFlagged}>

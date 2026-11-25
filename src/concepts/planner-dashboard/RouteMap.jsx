@@ -33,9 +33,13 @@ const icon = (cls, text = '') =>
   L.divIcon({ className: 'cn-pin-wrap', html: `<div class="cn-pin ${cls}">${text}</div>`, iconSize: [0, 0] });
 
 // ghostTrip: while a suggested stop order is previewed, the current route is drawn faint underneath.
-export default function RouteMap({ sites, trip, ghostTrip, ix, stopNo, hoverSite, onHover, onToggleSite, fitKey }) {
+// Proposal view (mode 'plan', PB-01): `otherTrips` are the other proposed trips, drawn thin and grey under the
+// selected `trip`; clicking one opens it (onSelectTrip). `focusSite` keeps a site highlighted (a selected unassigned
+// order). Site pins carry their own click hint (`hint`) and state: 'proposal' (on another trip) or 'unassigned'.
+export default function RouteMap({ sites, trip, ghostTrip, otherTrips = [], onSelectTrip, ix, stopNo, hoverSite, focusSite, onHover, onToggleSite, fitKey, mode = 'manual' }) {
   const legs = useMemo(() => (trip ? tripLegs(trip, ix) : []), [trip, ix]);
   const ghostLegs = useMemo(() => (ghostTrip ? tripLegs(ghostTrip, ix) : []), [ghostTrip, ix]);
+  const otherLegs = useMemo(() => otherTrips.map((t) => ({ id: t.id, legs: tripLegs(t, ix).filter((l) => !l.empty) })), [otherTrips, ix]);
   const loaded = ghostTrip ? '#7A4FB5' : '#1F4FA8';
   const fitPoints = useMemo(() => {
     if (trip) return trip.stops.map((s) => [ix.loc(s.locId).lat, ix.loc(s.locId).lng]);
@@ -52,6 +56,13 @@ export default function RouteMap({ sites, trip, ghostTrip, ix, stopNo, hoverSite
         <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <Fit points={fitPoints} fitKey={fitKey} />
         <AutoResize />
+        {otherLegs.map((t) =>
+          t.legs.map((l) => (
+            <Polyline key={`other-${t.id}-${l.i}`} positions={l.points} pathOptions={{ color: '#8E9AB4', weight: 3, opacity: 0.55 }} eventHandlers={onSelectTrip ? { click: () => onSelectTrip(t.id) } : undefined}>
+              <Tooltip sticky>{`${t.id} · click to open`}</Tooltip>
+            </Polyline>
+          )),
+        )}
         {ghostLegs.map((l) => (
           <Polyline key={`ghost-${l.i}`} positions={l.points} pathOptions={{ color: '#7D8596', weight: 4, opacity: 0.75, dashArray: '7 6' }} interactive={false} />
         ))}
@@ -72,8 +83,9 @@ export default function RouteMap({ sites, trip, ghostTrip, ix, stopNo, hoverSite
         ) : null}
         {sites.map((s) => {
           const n = stopNo[s.siteId];
-          const hover = hoverSite === s.siteId;
-          const cls = `${n ? `cn-pin-stop${ghostTrip ? ' is-preview' : ''}` : s.state === 'planned' ? 'cn-pin-planned' : 'cn-pin-open'}${s.urgent ? ' is-urgent' : ''}${hover ? ' is-hover' : ''}${s.dim && !n && !hover ? ' is-dim' : ''}${n && s.issue ? ` is-${s.issue}` : ''}`;
+          const hover = hoverSite === s.siteId || focusSite === s.siteId;
+          const base = n ? `cn-pin-stop${ghostTrip ? ' is-preview' : ''}` : s.state === 'planned' ? 'cn-pin-planned' : s.state === 'proposal' ? 'cn-pin-proposal' : s.state === 'unassigned' ? 'cn-pin-open is-unassigned' : 'cn-pin-open';
+          const cls = `${base}${s.urgent ? ' is-urgent' : ''}${hover ? ' is-hover' : ''}${s.dim && !n && !hover ? ' is-dim' : ''}${n && s.issue ? ` is-${s.issue}` : ''}`;
           return (
             <Marker
               key={s.siteId}
@@ -92,16 +104,26 @@ export default function RouteMap({ sites, trip, ghostTrip, ix, stopNo, hoverSite
                 {s.label}
                 {n && s.issue ? <div style={{ fontSize: 11, fontWeight: 600 }}>{s.issue === 'block' ? 'Part of a hard-rule conflict' : 'Raises a warning on every suitable truck'}</div> : null}
                 {s.dim && !n ? <div style={{ opacity: 0.7, fontSize: 11 }}>Hidden by the order filters</div> : null}
-                {s.state !== 'planned' ? <div style={{ opacity: 0.7, fontSize: 11 }}>{n ? 'Click to remove from trip' : 'Click to add to trip'}</div> : null}
+                {s.hint ? <div style={{ opacity: 0.7, fontSize: 11 }}>{s.hint}</div> : s.state !== 'planned' ? <div style={{ opacity: 0.7, fontSize: 11 }}>{n ? 'Click to remove from trip' : 'Click to add to trip'}</div> : null}
               </Tooltip>
             </Marker>
           );
         })}
       </MapContainer>
       <div className="cn-map-legend">
-        <span><i className="cn-lg cn-pin-open" /> Unplanned</span>
-        <span><i className="cn-lg cn-pin-stop" /> On this trip</span>
-        <span><i className="cn-lg cn-pin-planned" /> Sent</span>
+        {mode === 'plan' ? (
+          <>
+            <span><i className="cn-lg cn-pin-stop" /> Selected trip</span>
+            <span><i className="cn-lg cn-pin-proposal" /> Other trips</span>
+            <span><i className="cn-lg cn-pin-open is-unassigned" /> Unassigned</span>
+          </>
+        ) : (
+          <>
+            <span><i className="cn-lg cn-pin-open" /> Unplanned</span>
+            <span><i className="cn-lg cn-pin-stop" /> On this trip</span>
+            <span><i className="cn-lg cn-pin-planned" /> Sent</span>
+          </>
+        )}
         {ghostTrip ? (
           <>
             <span><i className="cn-lg-line current" /> Current route</span>

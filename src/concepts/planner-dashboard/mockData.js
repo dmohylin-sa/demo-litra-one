@@ -4,13 +4,18 @@
 // to the returned copy only:
 //   - extra delivery sites for existing Martinsen (MTN) customers,
 //   - two fictional MTN customers (with contracts so orders validate),
-//   - extra unplanned orders so each MTN planning day has about 24 orders.
+//   - extra unplanned orders so each MTN planning day has about 24 orders,
+//   - one extra MTN truck with its tank trailer and four extra MTN drivers, so the scripted 2 Dec day plan
+//     (src/concepts/day-plan.js) can staff its trips: the prototype fleet has 6 usable drivers for 20 valid orders.
 // Every order is validated with the prototype's own validateOrder(), so "needs fixing" comes from
 // the existing rules, not from hand-set flags. The original 10 orders for 2 Dec and the urgent
 // same-day order are untouched; no extra order uses a site a presenter scenario selects on that day.
 // All names and places are mock data for the exploration, not client data.
+// The demo order and the scripted trip IDs are pinned first (pinDemoIds, src/concepts/demo.js), so every concept built
+// on this seed shows ORD-118540 for the demo order on any JS engine.
 
 import { createSeed, NEXT_DAY, DEMO_DAY } from '../../data/seed.js';
+import { pinDemoIds } from '../demo.js';
 import { ixOf } from '../../domain/ix.js';
 import { validateOrder } from '../../domain/rules.js';
 import { at } from '../../domain/util.js';
@@ -27,6 +32,27 @@ export const EXTRA_CUSTOMERS = [
 export const EXTRA_CONTRACTS = [
   { id: 'K-BRV', customerId: 'C-BRV', companyId: 'MTN', rateCardId: null, validFrom: '2026-01-01', validTo: '2027-12-31', currency: 'NOK' },
   { id: 'K-SOL', customerId: 'C-SOL', companyId: 'MTN', rateCardId: null, validFrom: '2026-07-01', validTo: '2027-06-30', currency: 'NOK' },
+];
+
+// Mock fleet additions (MTN). Same shape as src/data/masters.js. TK-09 runs a morning and an afternoon trip in the
+// day plan with two different drivers; trucks running two shifts need more drivers than trucks.
+export const EXTRA_TRUCKS = [
+  { id: 'TK-09', reg: 'EB 41452', model: 'Volvo FH 460', fuel: 'DIESEL', companyId: 'MTN', homeBase: 'D-OSL', telematicsId: 'rFMS-VOL-41452', provider: 'Volvo Connect (rFMS)', status: 'Active', hasPump: true, hasMeter: true, defaultTrailerId: 'TR-09' },
+];
+
+export const EXTRA_TRAILERS = [
+  { id: 'TR-09', reg: 'TA 6115', companyId: 'MTN', type: 'TANK', rigid: false, compartments: [9000, 8500, 8500, 8500, 8500], unit: 'L', adrApprovalUntil: '2027-08-31', comboLength: 16.5, status: 'Active' },
+];
+
+const driver = (id, name, homeBase, expires, phone) => ({
+  id, name, companyId: 'MTN', homeBase, licence: ['C', 'CE'], adr: { tank: true, class2: false, expires }, phone, pin: '1234', tachoLeftMin: 540, absent: [],
+});
+
+export const EXTRA_DRIVERS = [
+  driver('DR-09', 'Ola Strand', 'D-RUD', '2028-03-14', '+47 913 22 409'),
+  driver('DR-10', 'Ingrid Lie', 'D-OSL', '2027-11-02', '+47 913 22 410'),
+  driver('DR-11', 'Henrik Aas', 'D-OSL', '2028-06-21', '+47 913 22 411'),
+  driver('DR-12', 'Marte Vik', 'D-OSL', '2029-02-08', '+47 913 22 412'),
 ];
 
 export const EXTRA_SITES = [
@@ -61,7 +87,8 @@ const NEXT = [
   ['S-MJO-MOE', 'C-MJO', 'D5000', '06:00', '08:00', { requirements: 'Pump and meter. Excavators refuel at 07:30.' }],
   ['S-MJO-BIR', 'C-MJO', 'H7000', '14:00', '17:00', { requirements: 'Pump and meter. Report to the site office on arrival.' }],
   ['S-HED-ROM', 'C-HED', 'O4500', '10:30', '15:30', { extRef: 'Email "Fyringsolje kornlager"' }],
-  ['S-AER-FAG', 'C-AER', 'J15000', '08:00', '11:00', { extRef: 'API order AF-30218', requirements: 'Quality sampling before discharge.' }],
+  // 28,000 L: with Hamar airport's 12,000 L it exceeds the one Jet tank (38,000 L), so the day plan leaves it unassigned.
+  ['S-AER-FAG', 'C-AER', 'J28000', '08:00', '11:00', { extRef: 'API order AF-30218', requirements: 'Quality sampling before discharge.' }],
   ['S-BRV-GAR', 'C-BRV', 'A5000', '07:00', '12:00', {}],
   ['S-SOL-HAM', 'C-SOL', 'O16000', '05:30', '08:30', { urgent: true, extRef: 'Email "Backup-kjel på olje"', requirements: 'Backup boiler running on oil; tank at 18%.' }],
   // needs fixing (validateOrder): inactive customer without contract or site; quantity missing
@@ -102,12 +129,15 @@ const NEXT_RECEIVED = ['05:10', '05:25', '05:40', '05:55', '06:05', '06:15', '06
 const TODAY_RECEIVED = (i) => (i < 12 ? `2026-11-30T${String(14 + Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '35' : '05'}` : `${DEMO_DAY}T0${5 + Math.floor((i - 12) / 5)}:${String(((i - 12) % 5) * 11 + 3).padStart(2, '0')}`);
 
 export function createConceptSeed() {
-  const s = createSeed();
+  const s = pinDemoIds(createSeed());
   s.masters = {
     ...s.masters,
     customers: [...s.masters.customers, ...EXTRA_CUSTOMERS],
     contracts: [...s.masters.contracts, ...EXTRA_CONTRACTS],
     locations: [...s.masters.locations, ...EXTRA_SITES],
+    trucks: [...s.masters.trucks, ...EXTRA_TRUCKS],
+    trailers: [...s.masters.trailers, ...EXTRA_TRAILERS],
+    drivers: [...s.masters.drivers, ...EXTRA_DRIVERS],
   };
   const ix = ixOf(s.masters);
   let seq = Math.max(...s.orders.map((o) => Number(o.id.slice(4)) || 0));

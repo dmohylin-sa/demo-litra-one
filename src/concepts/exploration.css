@@ -1,0 +1,28 @@
+/* Exploration toolbar: BA demo navigation (Session 1, A-01) and the concept index's demo journey list.
+   Same neutral, "not the product" styling as the rest of the toolbar (.cn-xbar in concepts.css). */
+.cn-xbar-steps { display: flex; align-items: center; gap: 2px; padding-left: 12px; border-left: 1px solid #D4D4D8; }
+.cn-xbar-step { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 6px; color: #52525B; font-weight: 600; white-space: nowrap; }
+.cn-xbar-step:hover { color: #18181B; background: #E4E4E7; }
+.cn-xbar-step:focus-visible { outline: 2px solid #3F3F46; outline-offset: 1px; }
+.cn-xbar-step.is-active { color: #18181B; background: #fff; box-shadow: 0 0 0 1px #A1A1AA; }
+.cn-xbar-step.is-active .cn-xbar-no { color: #18181B; }
+/* Inactive steps show their number (label in the tooltip and the accessible name); wide screens show every label. */
+.cn-xbar-step:not(.is-active) .cn-xbar-step-label { display: none; }
+@media (min-width: 1880px) {
+  .cn-xbar-step:not(.is-active) .cn-xbar-step-label { display: inline; font-weight: 500; }
+}
+.cn-xbar-index { display: inline-flex; align-items: center; gap: 6px; color: #52525B; font-weight: 600; white-space: nowrap; padding: 4px 8px; border-radius: 6px; }
+.cn-xbar-index:hover { color: #18181B; background: #E4E4E7; }
+
+/* Concept index: the demo journey */
+.cn-index-section { margin: 28px 0 10px; font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #71717A; }
+.cn-journey { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.cn-journey a { display: flex; gap: 10px; align-items: baseline; height: 100%; padding: 10px 12px; border: 1px solid #E4E4E7; border-radius: 8px; background: #fff; color: #27272A; }
+.cn-journey a:hover { border-color: #A1A1AA; }
+.cn-journey-no { font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #71717A; }
+.cn-journey-label { display: block; font-weight: 700; }
+.cn-journey-at { display: block; font-size: 12px; color: #71717A; }
+
+/* Reset demo (Session 2, A-09) */
+.cn-xbar .cn-xbar-reset { margin-left: 2px; }
+.cn-reset-text { display: block; max-width: 280px; }
