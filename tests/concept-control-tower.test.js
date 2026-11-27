@@ -5,6 +5,7 @@ import { createControlTowerScenario, periodMetrics, periodMetricsRange, coverage
 import { START_CLOCK, orderPosting } from '../src/concepts/back-office/model.js';
 import { fmtDur, fmtNum } from '../src/domain/util.js';
 import { ORDER_LISTS, orderRoute, withFocus, withOrder, withBack, withFilters } from '../src/concepts/control-tower/nav.js';
+import { createOpsScenario } from '../src/concepts/operations/model.js';
 import { periodKpis } from '../src/domain/kpi.js';
 
 const scn = createControlTowerScenario();
@@ -509,7 +510,42 @@ test('Live Tracking map data: Operations’ positions on the plan’s legs; deli
   assert.deepEqual([onSite.live.pos.lat, onSite.live.pos.lng], [stop.lat, stop.lng], 'a truck on site is drawn at the site');
   const O = liveTracking(opening(), ALL);
   assert.equal(O.active.length, 0);
-  assert.ok(O.trips.every((t) => t.notStarted && t.plan.stops.some((s) => s.kind === 'deliver')), 'planned stops to draw, no truck');
+  assert.ok(O.trips.every((t) => t.notStarted && t.plan.stops.some((s) => s.kind === 'deliver')), 'planned stops to draw');
+});
+
+test('Live Tracking fleet (BA: trucks visible, as on the Operations map): every dispatched truck once, inactive ones grey', () => {
+  const L = liveTracking(closing(), ALL);
+  const trucks = L.fleet.map((t) => t.truck.id);
+  assert.equal(new Set(trucks).size, trucks.length, 'one marker per truck');
+  assert.deepEqual([...new Set(L.trips.map((t) => t.truck.id))].sort(), [...trucks].sort(), 'every truck with a trip that day');
+  assert.ok(L.active.every((t) => L.fleet.includes(t)), 'a truck on the road shows its active trip');
+  assert.ok(L.fleet.length > L.active.length, 'completed trucks are on the map too');
+  L.fleet.filter((t) => !t.active).forEach((t) => {
+    assert.equal(t.status.tone, 'grey', `${t.id}: completed in Operations’ grey`);
+    const end = scn.ix.loc(t.plan.stops[t.plan.stops.length - 1].locId);
+    assert.deepEqual([t.pos.lat, t.pos.lng], [end.lat, end.lng], `${t.id}: back at its depot`);
+    assert.equal(t.now, 'Completed · back at depot');
+  });
+  // Closed in the record although the simulation still waits for the driver: drawn at the depot, not as unconfirmed.
+  const t29 = L.fleet.find((t) => t.id === 'TRP-26-04829');
+  assert.ok(t29 && t29.closed && t29.status.tone === 'grey');
+  const O = liveTracking(opening(), ALL);
+  assert.ok(O.fleet.length > 0 && O.fleet.every((t) => t.notStarted), 'the opening: every truck not started');
+  O.fleet.forEach((t) => {
+    const start = scn.ix.loc(t.plan.stops[0].locId);
+    assert.deepEqual([t.pos.lat, t.pos.lng], [start.lat, start.lng], `${t.id}: at its start`);
+  });
+  // BA: the map is the fleet Operations shows, not only the trips of the step's journey state.
+  const ops = createOpsScenario();
+  const opsTrucks = [...new Set(ops.trips.map((t) => t.truckId))].sort();
+  assert.deepEqual(O.fleet.map((t) => t.truck.id).sort(), opsTrucks, 'opening: the Operations map’s trucks');
+  assert.deepEqual(L.fleet.map((t) => t.truck.id).sort(), opsTrucks, 'close: the Operations map’s trucks');
+  // Not dispatched at 07:20 on 1 Dec (the proposed plan): Operations' trips, shown as not started, in no figure.
+  const notYet = O.fleet.filter((t) => !t.dispatched);
+  assert.ok(notYet.length > 0 && notYet.every((t) => t.status.label === 'Not started' && t.status.tone === 'grey' && !t.attention && !O.trips.includes(t)));
+  assert.ok(O.trips.every((t) => t.dispatched), 'the figures count the dispatched trips only');
+  assert.deepEqual([O.running, O.notStarted, O.completed, O.delivered, O.atRisk], [0, O.trips.length, 0, 0, 0], 'opening figures unchanged');
+  assert.ok(L.fleet.every((t) => t.dispatched), 'after Operations opens, nothing is added');
 });
 
 test('Live Tracking map wiring: existing map stack, no scroll capture, simulated positions said, no trip table', () => {
@@ -519,7 +555,9 @@ test('Live Tracking map wiring: existing map stack, no scroll capture, simulated
   assert.match(map, /import \{ tripLegs \} from '\.\.\/planner-dashboard\/model\.js'/, 'route legs as the Operations map draws them');
   assert.match(map, /scrollWheelZoom=\{false\}/, 'the dashboard page keeps its scroll');
   assert.match(map, /op-truck tone-\$\{t\.status\.tone\}/, 'Operations’ truck pins and status tones');
+  assert.match(map, /<Trucks fleet=\{fleet\}/, 'the whole fleet is drawn, not only the trucks on the road');
   const lt = read('LiveTracking.jsx');
+  assert.match(lt, /Waiting \/ unconfirmed<\/span>[\s\S]*Not started \/ done<\/span>/, 'the Operations map legend');
   assert.match(lt, /Simulated positions from the trip plan, not GPS/);
   assert.ok(!/<table/.test(lt), 'the trip table is replaced by the map');
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));

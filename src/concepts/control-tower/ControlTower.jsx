@@ -9,7 +9,7 @@ import { HeaderActions } from '../ExplorationShell.jsx';
 import { useJourney } from '../journey/JourneyProvider.jsx';
 import { UBW_KEY } from '../back-office/BackOffice.jsx';
 import ProductHeader from '../product/ProductHeader.jsx';
-import { createControlTowerScenario, periodMetricsRange, pipeline, attention, openInvoicing, coverageOf, orderTrace, postedInvoices, liveTracking, stateOfStep, CT_STEPS, PERIODS } from './model.js';
+import { createControlTowerScenario, periodMetricsRange, pipeline, attention, openInvoicing, coverageOf, orderTrace, postedInvoices, liveTracking, stateOfStep, CT_STEPS, CT_FLEET_STEP, PERIODS } from './model.js';
 import { Money, Delta } from './ui.jsx';
 import Overview from './Overview.jsx';
 import Investigation from './Investigation.jsx';
@@ -79,7 +79,7 @@ const CLOCK_NOTE = {
 function ControlTowerState({ stepNo }) {
   const journey = useJourney();
   const state = stateOfStep(stepNo);
-  const scn = useMemo(() => createControlTowerScenario(journey.viewFor(stepNo), state, { ubw: readUbw() }), [journey.history, stepNo]); // eslint-disable-line react-hooks/exhaustive-deps
+  const scn = useMemo(() => createControlTowerScenario(journey.viewFor(stepNo), state, { ubw: readUbw(), opsView: journey.viewFor(CT_FLEET_STEP) }), [journey.history, stepNo]); // eslint-disable-line react-hooks/exhaustive-deps
   const trace = useMemo(() => orderTrace(scn), [scn]);
   const [params, setParams] = useSearchParams();
   const focus = params.get('focus');
