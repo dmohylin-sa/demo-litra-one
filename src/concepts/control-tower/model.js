@@ -26,7 +26,7 @@
 
 import { createBackOfficeScenario, initialBoState, orderPosting, orderViews, pricePreview, reasonOf, stepsOf, loadedOf, deliveredOf, WORK, HERO_TRIP } from '../back-office/model.js';
 import { buildBoard, intakeOrders, stateMeta } from '../planner-dashboard/proposals.js';
-import { createOpsScenario, initialOpsState, computeLive, exceptionOf, STATUS as OPS_STATUS } from '../operations/model.js';
+import { createOpsScenario, initialOpsState, computeLive, exceptionOf, STATUS as OPS_STATUS, OPS_STEP } from '../operations/model.js';
 import { createConceptSeed } from '../planner-dashboard/mockData.js';
 import { journeyView, emptyLog, scenarioContext, PLAN_ID } from '../journey/index.js';
 import { WORKSPACE_CLOCK, STEP_TIMES, PLANNING_DAY, DELIVERY_DAY } from '../timeline.js';
@@ -45,16 +45,22 @@ export const PERIODS = [7, 14, 30];
 
 // The demo steps the Control Tower shows (demo-steps.js) and the state each one opens.
 export const CT_STEPS = Object.freeze({ opening: '01', closing: '09' });
+// The step whose journey view Operations opens with: the Live Tracking map's fleet (createControlTowerScenario opsView).
+export const CT_FLEET_STEP = OPS_STEP;
 export const stateOfStep = (no) => (no === CT_STEPS.closing ? 'closing' : 'opening');
 // Last demo step whose milestones the opening shows: the planning day (plan §3.3 "Milestone ownership").
 const OPENING_LAST_STEP = '03';
 
 // The scenario of one Control Tower state. `view`: the journey view of the state's step (journey.viewFor('01' | '09'));
 // without it, the step's snapshot (a fresh session). `ubw`: Back Office's UBW simulation state (its session key), so
-// a rejection or credit block done live there reads the same here. No argument = the closing snapshot.
-export function createControlTowerScenario(view = null, state = 'closing', { ubw = null } = {}) {
+// a rejection or credit block done live there reads the same here. `opsView`: the journey view Operations opens with
+// (journey.viewFor(OPS_STEP)), the fleet the Live Tracking map shows; without it, its snapshot. No argument = the
+// closing snapshot.
+export function createControlTowerScenario(view = null, state = 'closing', { ubw = null, opsView = null } = {}) {
   const v = view || journeyView(emptyLog(), CT_STEPS[state]);
-  return state === 'opening' ? openingScenario(v) : closingScenario(v, ubw);
+  const scn = state === 'opening' ? openingScenario(v) : closingScenario(v, ubw);
+  scn.opsView = opsView || journeyView(emptyLog(), OPS_STEP);
+  return scn;
 }
 
 // Opening clock (rule 6 for a read-only workspace): the step's entry time, or the latest planning-day milestone the
@@ -664,47 +670,82 @@ function opsOf(scn) {
 
 export const LIVE_ROWS = 5;
 
+// One Live Tracking row: Operations' trip `t` (scenario `os`, state `now`) at the clock, with the Control Tower's trip
+// record winning where it holds a result.
+function rowOf(scn, os, now, t, clock) {
+  const { ix } = os;
+  const rec = scn.s.trips.find((x) => x.id === t.id) || null;
+  const closed = !!rec && rec.status === 'Completed' && !!rec.completedAt && rec.completedAt <= clock;
+  const live = computeLive(os, now.trips[t.id], clock);
+  const podAt = (siteId) => rec?.stops.find((x) => x.kind === 'deliver' && x.locId === siteId)?.pod?.at || null;
+  const delivered = live.deliveries.filter((d) => closed || d.state === 'done' || (podAt(d.siteId) && podAt(d.siteId) <= clock)).length;
+  const active = !closed && (live.phase === 'atStop' || live.phase === 'driving');
+  const exc = closed || live.phase === 'done' ? null : exceptionOf(os, now, t.id, live);
+  const depot = t.stops[t.stops.length - 1];
+  // Next stop and its time, as Operations computes them: on site now -> planned departure; the next delivery ->
+  // its ETA; all delivered -> back at the depot.
+  const next = !live.next
+    ? { kind: 'depot', name: ix.loc(depot.locId).name, at: live.T[live.T.length - 1].arr }
+    : { kind: live.next.state === 'now' ? 'onSite' : 'next', name: ix.loc(live.next.siteId).name, at: live.next.state === 'now' ? live.next.etd : live.next.eta };
+  const end = ix.loc(depot.locId);
+  return {
+    id: t.id,
+    dispatched: true,
+    companyId: t.companyId,
+    plan: t, // Operations' trip (stops with locations): the map's route legs and stop pins
+    terminalId: t.terminalId,
+    truck: ix.truck(t.truckId),
+    driver: ix.driver(t.driverId),
+    terminal: ix.loc(t.terminalId)?.name,
+    sites: t.stops.filter((x) => x.kind === 'deliver').map((x) => ix.loc(x.locId).name),
+    live,
+    // Where the map draws the truck: Operations' position; a trip closed in the record is back at its depot.
+    pos: closed && live.phase !== 'done' ? { lat: end.lat, lng: end.lng } : live.pos,
+    status: OPS_STATUS[closed ? 'done' : live.status],
+    // What the truck is doing now (Operations' wording); a trip closed in the record is back at the depot.
+    now: closed ? 'Completed · back at depot' : live.label,
+    active,
+    closed: closed || live.phase === 'done',
+    notStarted: !closed && live.phase === 'notStarted',
+    delivered,
+    deliveries: live.deliveries.length,
+    next,
+    attention: !!exc?.needsAttention,
+  };
+}
+
+// The fleet the Operations map shows: Operations' scenario on the view it opens with (scn.opsView), its own state.
+const fleetCache = new WeakMap();
+function opsFleetOf(scn) {
+  if (!fleetCache.has(scn)) {
+    const os = createOpsScenario(scn.opsView);
+    fleetCache.set(scn, { os, st: initialOpsState(os, scn.opsView) });
+  }
+  return fleetCache.get(scn);
+}
+
+// Map fleet: the trips the Control Tower's state runs (`trips`), plus, before Operations opens (its clock), the other
+// trips Operations will run that are not dispatched yet at the Control Tower's clock (at the opening: the proposed
+// plan's trips). Those are Operations' trips, trucks and depots, drawn "Not started" (grey) and flagged as not
+// dispatched; they count in no figure. After Operations opens, a trip missing from the state is not added back.
+function fleetRows(scn, companyIds, trips, clock) {
+  const { os, st } = opsFleetOf(scn);
+  if (clock >= st.clock) return trips;
+  const known = new Set(trips.map((t) => t.id));
+  const now = { ...st, clock };
+  const notYet = os.trips
+    .filter((t) => companyIds.includes(t.companyId) && !known.has(t.id))
+    .map((t) => ({ ...rowOf(scn, os, now, t, clock), dispatched: false, status: OPS_STATUS.planned, now: 'Planned · not dispatched yet', attention: false }));
+  return [...trips, ...notYet];
+}
+
 export function liveTracking(scn, companyIds) {
   const { os, st } = opsOf(scn);
-  const { ix } = os;
   const clock = scn.asOf;
   const now = { ...st, clock };
   const trips = os.trips
     .filter((t) => companyIds.includes(t.companyId))
-    .map((t) => {
-      const rec = scn.s.trips.find((x) => x.id === t.id) || null;
-      const closed = !!rec && rec.status === 'Completed' && !!rec.completedAt && rec.completedAt <= clock;
-      const live = computeLive(os, now.trips[t.id], clock);
-      const podAt = (siteId) => rec?.stops.find((x) => x.kind === 'deliver' && x.locId === siteId)?.pod?.at || null;
-      const delivered = live.deliveries.filter((d) => closed || d.state === 'done' || (podAt(d.siteId) && podAt(d.siteId) <= clock)).length;
-      const active = !closed && (live.phase === 'atStop' || live.phase === 'driving');
-      const exc = closed || live.phase === 'done' ? null : exceptionOf(os, now, t.id, live);
-      const depot = t.stops[t.stops.length - 1];
-      // Next stop and its time, as Operations computes them: on site now -> planned departure; the next delivery ->
-      // its ETA; all delivered -> back at the depot.
-      const next = !live.next
-        ? { kind: 'depot', name: ix.loc(depot.locId).name, at: live.T[live.T.length - 1].arr }
-        : { kind: live.next.state === 'now' ? 'onSite' : 'next', name: ix.loc(live.next.siteId).name, at: live.next.state === 'now' ? live.next.etd : live.next.eta };
-      return {
-        id: t.id,
-        companyId: t.companyId,
-        plan: t, // Operations' trip (stops with locations): the map's route legs and stop pins
-        terminalId: t.terminalId,
-        truck: ix.truck(t.truckId),
-        driver: ix.driver(t.driverId),
-        terminal: ix.loc(t.terminalId)?.name,
-        sites: t.stops.filter((x) => x.kind === 'deliver').map((x) => ix.loc(x.locId).name),
-        live,
-        status: OPS_STATUS[closed ? 'done' : live.status],
-        active,
-        closed: closed || live.phase === 'done',
-        notStarted: !closed && live.phase === 'notStarted',
-        delivered,
-        deliveries: live.deliveries.length,
-        next,
-        attention: !!exc?.needsAttention,
-      };
-    });
+    .map((t) => rowOf(scn, os, now, t, clock));
   const active = trips.filter((t) => t.active).sort((a, b) => a.status.rank - b.status.rank || a.next.at.localeCompare(b.next.at) || a.id.localeCompare(b.id));
   return {
     clock,
@@ -720,7 +761,23 @@ export function liveTracking(scn, companyIds) {
     deliveries: trips.reduce((n, t) => n + t.deliveries, 0),
     atRisk: trips.filter((t) => t.attention).length,
     trips,
+    fleet: fleetOf(fleetRows(scn, companyIds, trips, clock)),
   };
+}
+
+// The trucks on the map, as on the Operations map (its trips, tone by status: not started and completed grey), one
+// marker per truck: a truck with two trips that day shows its current one (active, else the next not
+// started, else the last completed).
+function fleetOf(trips) {
+  const rank = (t) => (t.active ? 0 : t.notStarted ? 1 : 2);
+  const byTruck = new Map();
+  trips.forEach((t) => {
+    const cur = byTruck.get(t.truck.id);
+    const better = !cur || rank(t) < rank(cur)
+      || (rank(t) === rank(cur) && (t.notStarted ? t.live.T[0].dep < cur.live.T[0].dep : t.live.T[0].dep > cur.live.T[0].dep));
+    if (better) byTruck.set(t.truck.id, t);
+  });
+  return trips.filter((t) => byTruck.get(t.truck.id) === t);
 }
 
 // Invoiced orders: one row per order on the given posted invoices (postedInvoices), newest posting first. The same rows

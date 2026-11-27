@@ -172,7 +172,7 @@ a.ct-jlabel:hover { color: #1F4FA8; text-decoration: underline; }
   .ct-ops-row .ct-livemap { min-height: 300px; }
 }
 .ct-livesec { display: flex; flex-direction: column; }
-.ct-livemap { position: relative; flex: 1 1 auto; min-height: 235px; border: 1px solid #E6EAF2; border-radius: 10px; overflow: hidden; isolation: isolate; }
+.ct-livemap { position: relative; flex: 1 1 auto; min-height: 212px; /* the Operations legend wraps to 2 lines beside Performance; the row keeps its height */ border: 1px solid #E6EAF2; border-radius: 10px; overflow: hidden; isolation: isolate; }
 .ct-livemap .leaflet-container { font: inherit; background: #EEF2F7; }
 .ct-livemap-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 6px 0 8px; color: #5B6478; }
 .ct-livemap-legend .op-lg, .ct-livemap-legend .op-lg-sq { width: 10px; height: 10px; vertical-align: -1px; margin-right: 3px; }
@@ -181,6 +181,7 @@ a.ct-jlabel:hover { color: #1F4FA8; text-decoration: underline; }
 .ct-livemap-note b { color: #1B2541; margin-right: 4px; }
 .ct-plan-pin { transform: translate(-50%, -50%); width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 3px solid #8A93A6; box-shadow: 0 1px 3px rgba(17,24,51,.3); }
 .ct-plan-pin.is-legend { display: inline-block; transform: none; width: 10px; height: 10px; border-width: 2px; vertical-align: -1px; margin-right: 3px; box-shadow: none; }
+.ct-truck-nudge { position: relative; } /* a truck pin nudged clear of another (LiveMap.jsx nudges) */
 .ct-livecard { position: absolute; left: 10px; top: 10px; z-index: 500; width: 250px; padding: 8px 10px; border-radius: 10px; background: #fff; box-shadow: 0 4px 14px rgba(17,24,51,.22); font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; }
 .ct-livecard-head { display: flex; align-items: center; gap: 6px; }
 .ct-livecard-x { border: none; background: none; padding: 2px; cursor: pointer; color: #8A93A6; font-size: 11px; line-height: 1; }
